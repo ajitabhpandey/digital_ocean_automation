@@ -41,3 +41,21 @@ DO_TARGET_FOLDER = 'Movies/Set1/'
 
 For example,
 LOCAL_SOURCE_DIR = '/home/ubuntu/Movies/'
+
+## Deployment
+
+Easiest way is to use a virtual environment. The following set of commands will build the required virtual environment.
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 -m pip install --upgrade pip
+pip install -r requirements.txt
+deactivate
+```
+
+In order to execute the scripts, the virtual environment needs to be activated and once the script execition is completed it needs to be deactivated. The following one liner will do it all together.
+
+```bash
+(cd /opt/digital_ocean_automation/;source /opt/digital_ocean_automation/venv/bin/activate && /opt/digital_ocean_automation/venv/bin/python3 /opt/digital_ocean_automation/upload2spaces.py;deactivate)
+```
