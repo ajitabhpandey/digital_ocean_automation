@@ -38,7 +38,13 @@ def is_file_present(client, bucket, prefix, key):
             return True
 
 
-def upload_to_object_store(client, bucket, full_path_to_filename, object_name=None):
+def upload_to_object_store(
+    client,
+    bucket,
+    full_path_to_filename,
+    object_name=None,
+    content_type="binary/octet-stream",
+):
     """Uploads the specified file to the object store
 
     Parameters:
@@ -46,6 +52,7 @@ def upload_to_object_store(client, bucket, full_path_to_filename, object_name=No
         bucket: str, target bucket location
         full_path_to_filename: str, full path of the file to be uploaded
         object_name: str, the new name of the file at the target location. full_path_to_filename is used if not specified
+        content_type: str, the content type of the file. Default value of binary/octet-stream is used if not specified
 
     Returns:
         False if the upload fails
@@ -53,7 +60,12 @@ def upload_to_object_store(client, bucket, full_path_to_filename, object_name=No
     """
     try:
         # Upload the file to Spaces
-        client.upload_file(full_path_to_filename, bucket, object_name)
+        client.upload_file(
+            full_path_to_filename,
+            bucket,
+            object_name,
+            ExtraArgs={"ACL": "private", "ContentType": content_type},
+        )
     except Exception as e:
         logger.error(f"Exception while uploading file - {e}")
         return False

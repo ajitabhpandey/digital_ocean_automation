@@ -12,6 +12,10 @@ from dolib.spaces_operations import is_file_present, upload_to_object_store
 
 
 def main():
+
+    ALLOWED_EXTENSIONS = (".flv", ".mp4")
+    FILE_CONTENT_TYPES = {"mp4": "video/mpeg", "flv": "video/x-flv"}
+
     # take environment variables from .env
     load_dotenv()
 
@@ -57,18 +61,20 @@ def main():
         # Process each file present in source location
         for filename in os.listdir(source_dir):
             # Consider only FLV and MP4 files
-            if filename.endswith((".flv", ".mp4")):
+            if filename.endswith(tuple(ALLOWED_EXTENSIONS)):
                 # Check if the file already exists and
                 # TODO - Check if the size of the source and destination file are matching
                 if is_file_present(client, DO_BUCKET, DO_TARGET_FOLDER, filename):
                     logger.info(f"File {filename} already exists, this will be skipped")
                 else:
                     logger.info(f"Uploading {os.path.join(source_dir, filename)}")
+                    extension = os.path.splitext(filename)[1].lstrip(".")
                     if upload_to_object_store(
                         client,
                         DO_BUCKET,
                         os.path.join(source_dir, filename),
                         DO_TARGET_FOLDER + filename,
+                        FILE_CONTENT_TYPES[extension],
                     ):
                         logger.info(f"Uploaded {os.path.join(source_dir, filename)}")
                         try:
