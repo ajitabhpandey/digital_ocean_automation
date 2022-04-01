@@ -13,7 +13,8 @@ from dolib.spaces_operations import is_file_present, upload_to_object_store
 
 def main():
 
-    ALLOWED_EXTENSIONS = (".flv", ".mp4")
+    ALLOWED_EXTENSIONS = (".mp4")
+    #ALLOWED_EXTENSIONS = (".flv", ".mp4")
     FILE_CONTENT_TYPES = {"mp4": "video/mpeg", "flv": "video/x-flv"}
 
     # take environment variables from .env
