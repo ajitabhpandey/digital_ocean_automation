@@ -6,8 +6,6 @@ import argparse
 from dotenv import load_dotenv
 
 import boto3.session
-from dotenv.main import load_dotenv
-
 import pandas as pd
 import io
 
