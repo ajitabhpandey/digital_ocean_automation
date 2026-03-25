@@ -30,6 +30,13 @@ def main():
         level=getattr(logging, loglevel.upper()),
     )
     logger = logging.getLogger(__name__)
+    
+    # Also add console handler for immediate feedback
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %I:%M:%S %p")
+    console_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(console_handler)
 
     logging.info("Started uploader run...")
     
