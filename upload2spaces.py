@@ -7,7 +7,7 @@ from dolib.spaces_operations import new_s3_client
 
 def main():
 
-    ALLOWED_EXTENSIONS = (".mp4",)
+    ALLOWED_EXTENSIONS = (".flv",)
     FILE_CONTENT_TYPES = {"mp4": "video/mpeg", "flv": "video/x-flv"}
 
     # take environment variables from .env
