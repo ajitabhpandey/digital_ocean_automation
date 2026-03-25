@@ -5,13 +5,9 @@ import datetime
 import argparse
 from dotenv import load_dotenv
 
-import boto3.session
-from botocore.client import Config
-from dotenv.main import load_dotenv
-
 from dolib.spaces_operations import (
     list_all_objects_older_than_last_modified,
-    delete_object,
+    new_s3_client,
 )
 
 
@@ -63,7 +59,8 @@ def main(utc_datetime, num_days, bucket, folder):
     DO_REGION = os.getenv("DO_REGION")
     DO_SPACES_URL = f"https://{DO_REGION}.digitaloceanspaces.com"
 
-    if not (bucket and not bucket.isspace()):
+    # Use provided bucket if valid, otherwise fall back to env variable
+    if bucket and not bucket.isspace():
         DO_BUCKET = bucket
     else:
         DO_BUCKET = os.getenv("DO_BUCKET")
@@ -71,64 +68,97 @@ def main(utc_datetime, num_days, bucket, folder):
     DO_TARGET_FOLDER = folder
 
     log_file = "do_spaces_delete.log"
-    # log_encoding = "utf-8"
     loglevel = "INFO"
     logging.basicConfig(
         format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %I:%M:%S %p",
         filename=log_file,
-        # encoding=log_encoding,
         level=getattr(logging, loglevel.upper()),
     )
     logger = logging.getLogger(__name__)
 
+    delete_counter = 0  # Initialize outside try block to avoid NameError
     logging.info("Started deletion...")
+    
     # Add a trailing slash to the DO_TARGET_FOLDER if it does not exists
     if not DO_TARGET_FOLDER.endswith("/"):
         logger.info("Missing trailing slash from DO_TARGET_FOLDER, adding one")
         DO_TARGET_FOLDER = DO_TARGET_FOLDER + "/"
 
     try:
-        # Initiate Session
-        session = boto3.session.Session()
-        client = session.client(
-            "s3",
-            region_name=DO_REGION,
-            endpoint_url=DO_SPACES_URL,
-            aws_access_key_id=DO_ACCESS_ID,
-            aws_secret_access_key=DO_SECRET_KEY,
+        # Use helper function to instantiate S3 client with retry logic
+        client = new_s3_client(
+            DO_REGION,
+            DO_SPACES_URL,
+            DO_ACCESS_ID,
+            DO_SECRET_KEY
         )
+        
+        if not client:
+            logger.error("Failed to create S3 client")
+            return False
+            
     except Exception as e:
         logger.error(f"Error while initiating session - {e}")
-    else:
-        target_utc_datetime = utc_datetime - timedelta(
-            num_days
-        )  # This means num_days back
+        return False
+    
+    try:
+        target_utc_datetime = utc_datetime - timedelta(days=num_days)
         logger.info(
             f"Specified UTC Date is {utc_datetime}, Target UTC Date is {target_utc_datetime}"
         )
         object_list = list_all_objects_older_than_last_modified(
             client, DO_BUCKET, DO_TARGET_FOLDER, target_utc_datetime
         )
+        
         if object_list:
             logger.info(f"{len(object_list)} objects received")
-            delete_counter = 0
-            for object in object_list:
-                if not object.endswith("/") and delete_object(client, bucket, object):
-                    logger.debug(f"Object {object} deleted successfully")
-                    delete_counter = delete_counter + 1
-                else:
-                    logger.error(f"Could not delete object {object}")
+            
+            # Batch delete objects - much more efficient than one-by-one deletion
+            # AWS allows up to 1000 objects per delete_objects call
+            for i in range(0, len(object_list), 1000):
+                batch = [
+                    {'Key': obj} 
+                    for obj in object_list[i:i+1000] 
+                    if not obj.endswith("/")
+                ]
+                
+                if batch:
+                    try:
+                        response = client.delete_objects(
+                            Bucket=DO_BUCKET,
+                            Delete={'Objects': batch}
+                        )
+                        
+                        # Count successfully deleted objects
+                        if 'Deleted' in response:
+                            batch_deleted = len(response['Deleted'])
+                            delete_counter += batch_deleted
+                            logger.info(f"Batch deleted {batch_deleted} objects")
+                        
+                        # Log any deletion errors
+                        if 'Errors' in response:
+                            for error in response['Errors']:
+                                logger.error(
+                                    f"Failed to delete {error['Key']}: {error['Message']}"
+                                )
+                    except Exception as e:
+                        logger.error(f"Error during batch deletion - {e}")
+                        return False
         else:
-            logger.error(
-                f"{len(object_list)} objects received. Something is not right."
+            logger.warning(
+                f"0 objects received. No objects older than {target_utc_datetime} found."
             )
-            return False
 
+    except Exception as e:
+        logger.error(f"Unexpected error during deletion - {e}")
+        return False
+    
     finally:
-        logger.info(f"Deleted {delete_counter} objects successfully")
+        logger.info(f"Successfully deleted {delete_counter} objects")
         logger.info("Completed the deletion run...")
-        return True
+    
+    return True
 
 
 if __name__ == "__main__":

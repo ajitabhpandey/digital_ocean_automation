@@ -2,12 +2,14 @@ import logging
 
 import boto3.session
 import botocore.exceptions
+from botocore.client import Config
 
 logger = logging.getLogger(__name__)
 
 def new_s3_client(region, endpoint_url, access_key, secret_key):
     """Initialize an S3 client with a private session so that multithreading
-    doesn't cause issues with the client's internal state
+    doesn't cause issues with the client's internal state. Includes retry logic
+    and connection pooling for better reliability and performance.
 
     Parameters:
         region: str, region where operaion is to be performed
@@ -22,12 +24,17 @@ def new_s3_client(region, endpoint_url, access_key, secret_key):
     # doesn't cause issues with the client's internal state
     try:
         session = boto3.session.Session()
+        config = Config(
+            max_pool_connections=10,
+            retries={'max_attempts': 3, 'mode': 'adaptive'}
+        )
         return session.client(
             "s3",
             region_name=region,
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
+            config=config
         )
     except Exception as e:
         logger.error(f"Error while initiating session - {e}")

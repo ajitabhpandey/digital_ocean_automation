@@ -2,19 +2,12 @@ import os
 import logging
 
 from dotenv import load_dotenv
-
-
-import boto3.session
-from botocore.client import Config
-from dotenv.main import load_dotenv
-
-from dolib.spaces_operations import is_file_present, upload_to_object_store
+from dolib.spaces_operations import new_s3_client
 
 
 def main():
 
-    ALLOWED_EXTENSIONS = (".mp4")
-    #ALLOWED_EXTENSIONS = (".flv", ".mp4")
+    ALLOWED_EXTENSIONS = (".mp4",)
     FILE_CONTENT_TYPES = {"mp4": "video/mpeg", "flv": "video/x-flv"}
 
     # take environment variables from .env
@@ -29,67 +22,109 @@ def main():
     source_dir = os.getenv("LOCAL_SOURCE_DIR")
 
     log_file = "do_spaces_uploader.log"
-    # log_encoding = "utf-8"
     loglevel = "INFO"
     logging.basicConfig(
         format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %I:%M:%S %p",
         filename=log_file,
-        # encoding=log_encoding,
         level=getattr(logging, loglevel.upper()),
     )
     logger = logging.getLogger(__name__)
 
     logging.info("Started uploader run...")
+    
     # Add a trailing slash to the DO_TARGET_FOLDER if it does not exists
     if not DO_TARGET_FOLDER.endswith("/"):
         logger.info("Missing trailing slash from DO_TARGET_FOLDER, adding one")
         DO_TARGET_FOLDER = DO_TARGET_FOLDER + "/"
 
     try:
-        # Initiate Session
-        session = boto3.session.Session()
-        client = session.client(
-            "s3",
-            region_name=DO_REGION,
-            endpoint_url=DO_SPACES_URL,
-            aws_access_key_id=DO_ACCESS_ID,
-            aws_secret_access_key=DO_SECRET_KEY,
+        # Use helper function to instantiate S3 client with retry logic
+        client = new_s3_client(
+            DO_REGION,
+            DO_SPACES_URL,
+            DO_ACCESS_ID,
+            DO_SECRET_KEY
         )
+        
+        if not client:
+            logger.error("Failed to create S3 client")
+            return False
+        
     except Exception as e:
         logger.error(f"Error while initiating session - {e}")
-    else:
+        return False
+
+    try:
+        # Cache remote file list once - much more efficient than per-file checks
+        remote_files = set()
+        
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=DO_BUCKET, Prefix=DO_TARGET_FOLDER)
+            
+            for page in pages:
+                if "Contents" in page:
+                    for obj in page["Contents"]:
+                        # Extract filename from full key path
+                        filename = obj["Key"].replace(DO_TARGET_FOLDER, "")
+                        if filename:  # Ignore folder entries
+                            remote_files.add(filename)
+            
+            logger.info(f"Found {len(remote_files)} existing files in remote bucket")
+        except Exception as e:
+            logger.error(f"Error listing remote files - {e}")
+            return False
+
         # Process each file present in source location
+        upload_count = 0
+        skip_count = 0
+        
         for filename in os.listdir(source_dir):
-            # Consider only FLV and MP4 files
-            if filename.endswith(tuple(ALLOWED_EXTENSIONS)):
-                # Check if the file already exists and
-                # TODO - Check if the size of the source and destination file are matching
-                if is_file_present(client, DO_BUCKET, DO_TARGET_FOLDER, filename):
-                    logger.info(f"File {filename} already exists, this will be skipped")
+            # Consider only allowed file extensions
+            if filename.endswith(ALLOWED_EXTENSIONS):
+                local_path = os.path.join(source_dir, filename)
+                
+                # Check if file already exists in remote bucket
+                if filename in remote_files:
+                    logger.info(f"File {filename} already exists, skipping")
+                    skip_count += 1
                 else:
-                    logger.info(f"Uploading {os.path.join(source_dir, filename)}")
-                    extension = os.path.splitext(filename)[1].lstrip(".")
-                    if upload_to_object_store(
-                        client,
-                        DO_BUCKET,
-                        os.path.join(source_dir, filename),
-                        DO_TARGET_FOLDER + filename,
-                        FILE_CONTENT_TYPES[extension],
-                    ):
-                        logger.info(f"Uploaded {os.path.join(source_dir, filename)}")
+                    try:
+                        logger.info(f"Uploading {local_path}")
+                        extension = os.path.splitext(filename)[1].lstrip(".")
+                        content_type = FILE_CONTENT_TYPES.get(extension, "binary/octet-stream")
+                        
+                        # Upload file
+                        client.upload_file(
+                            local_path,
+                            DO_BUCKET,
+                            DO_TARGET_FOLDER + filename,
+                            ExtraArgs={"ACL": "private", "ContentType": content_type},
+                        )
+                        logger.info(f"Successfully uploaded {filename}")
+                        upload_count += 1
+                        
+                        # Remove local file after successful upload
                         try:
-                            os.remove(os.path.join(source_dir, filename))
-                            logger.info(f"Removed {os.path.join(source_dir, filename)}")
+                            os.remove(local_path)
+                            logger.info(f"Removed local file {local_path}")
                         except Exception as e:
                             logger.error(
-                                f"Exception while removing the file {os.path.join(source_dir, filename)} - {e}"
+                                f"Exception while removing local file {local_path} - {e}"
                             )
-                    else:
-                        logger.error(
-                            f"Error uploading {os.path.join(source_dir, filename)}"
-                        )
-
+                    except Exception as e:
+                        logger.error(f"Error uploading {filename} - {e}")
+        
+        logger.info(
+            f"Upload complete: {upload_count} uploaded, {skip_count} skipped"
+        )
+        return True
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during upload - {e}")
+        return False
+    
     finally:
         logger.info("Completed the uploader run...")
 
